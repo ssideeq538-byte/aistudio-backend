@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 app = FastAPI()
 
-# --- إعدادات قاعدة البيانات ---
+# --- إعدادات قاعدة البيانات السحابية ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def save_to_db(prompt: str, language: str, code: str):
@@ -27,28 +27,47 @@ def save_to_db(prompt: str, language: str, code: str):
     except Exception as e:
         print(f"Database Error: {e}")
 
-# --- محرك Transformer المصغر ---
-d_model = 32
-block_size = 16
-n_head = 2
-n_layer = 2
-device = 'cpu'
+# --- بيانات التدريب التخصصية لمدرب الذكاء الاصطناعي ---
+train_corpus = """
+س: ماذا تعرف انت؟
+ج: انا مدربك في هندسة الذكاء الاصطناعي، اساعدك في فهم الشبكات العصبية وبايثون.
 
-# نصوص التدريب الأولية للنموذج
-train_corpus = (
-    "def calc(a, b): return a + b\n"
-    "def sub(a, b): return a - b\n"
-    "print('Hello Cloud AI')\n"
-)
-chars = sorted(list(set(train_corpus)))
-if ' ' not in chars:
-    chars.append(' ')
-vocab_size = len(chars)
+س: ما هو الذكاء الاصطناعي؟
+ج: هو بناء انظمة وخوارزميات برمجية قادرة على التعلم واتخاذ القرارات الذكية.
 
-stoi = {ch: i for i, ch in enumerate(chars)}
-itos = {i: ch for i, ch in enumerate(chars)}
+س: ما هو نموذج الترانسفورمر؟
+ج: هو بنية عصبية متطورة تعتمد على الانتباه الذاتي لمعالجة النصوص بالتوازي.
+
+س: كيف ابدا في هندسة الذكاء الاصطناعي؟
+ج: ابدا بتعلم لغة بايثون ومكتبة بايتورش وفهم الرياضيات ونماذج التعلم العميق.
+
+س: ما هي الشبكة العصبية؟
+ج: طبقات من الخلايا الرقمية المتصلة باوزان تتعلم تمثيل البيانات واستخراج الانماط.
+
+س: ما دور مصفوفات كيو وكي وفي؟
+ج: تمثل الاستعلام والمفتاح والقيمة لحساب اوزان الانتباه بين الكلمات في السياق.
+"""
+
+# تجهيز قاموس الحروف العربي والرموز (Tokenizer)
+arabic_letters = "ابتثجحخدذرزسشصضطظعغفقكلمنهويءآأإئؤةى"
+extra_chars = " ؟:!.\n()0123456789abcdefghijklmnopqrstuvwxyz"
+all_chars = sorted(list(set(train_corpus + arabic_letters + extra_chars)))
+
+# إضافة رمز <UNK> للتعامل مع أي حرف غير معروف
+vocab = ['<UNK>'] + [c for c in all_chars if c != '<UNK>']
+vocab_size = len(vocab)
+
+stoi = {ch: i for i, ch in enumerate(vocab)}
+itos = {i: ch for i, ch in enumerate(vocab)}
 encode = lambda s: [stoi.get(c, 0) for c in s]
 decode = lambda l: ''.join([itos.get(i, '') for i in l])
+
+# --- معمارية محرك Transformer ---
+d_model = 64
+block_size = 48
+n_head = 4
+n_layer = 3
+device = 'cpu'
 
 class Head(nn.Module):
     def __init__(self, head_size):
@@ -130,13 +149,13 @@ class MiniLLM(nn.Module):
             idx = torch.cat((idx, next_token), dim=1)
         return idx
 
-# تهيئة وتدريب النموذج عند بدء تشغيل السيرفر
+# --- تدريب النموذج السريع عند الإقلاع ---
 model = MiniLLM(vocab_size).to(device)
 raw_data = torch.tensor(encode(train_corpus), dtype=torch.long)
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
+optimizer = torch.optim.AdamW(model.parameters(), lr=8e-3)
 
-for _ in range(120):
-    ix = torch.randint(len(raw_data) - block_size, (2,))
+for _ in range(300):
+    ix = torch.randint(len(raw_data) - block_size, (4,))
     x = torch.stack([raw_data[i:i+block_size] for i in ix])
     y = torch.stack([raw_data[i+1:i+block_size+1] for i in ix])
     _, loss = model(x, y)
@@ -147,23 +166,35 @@ for _ in range(120):
 # --- نقاط الاتصال API ---
 class RequestBody(BaseModel):
     prompt: str
-    language: str
+    language: str = "Arabic"
 
 @app.get("/")
 def read_root():
-    return {"status": "AI Transformer Engine Online"}
+    return {"status": "Arabic AI Coach Engine Online"}
 
 @app.post("/generate")
-def generate_code(req: RequestBody):
-    start_tokens = encode(req.prompt[:block_size])
+def generate_response(req: RequestBody):
+    cleaned_prompt = req.prompt.strip()
+    formatted_input = f"س: {cleaned_prompt}\nج:"
+    start_tokens = encode(formatted_input)[-block_size:]
+    
     if not start_tokens:
         start_tokens = [0]
 
     input_tensor = torch.tensor([start_tokens], dtype=torch.long, device=device)
-    output_tokens = model.generate(input_tensor, max_new_tokens=50)[0].tolist()
-    generated_text = decode(output_tokens)
+    output_tokens = model.generate(input_tensor, max_new_tokens=60)[0].tolist()
+    full_output = decode(output_tokens)
+    
+    # استخراج نص الإجابة فقط بعد "ج:"
+    if "ج:" in full_output:
+        reply = full_output.split("ج:")[-1].split("س:")[0].strip()
+    else:
+        reply = full_output.strip()
 
-    # توثيق وحفظ المخرجات في PostgreSQL
-    save_to_db(req.prompt, req.language, generated_text)
+    if not reply:
+        reply = "انا مدربك الذكي، اسالني عن مفاهيم الذكاء الاصطناعي وبايثون."
 
-    return {"generated_code": generated_text}
+    # حفظ السؤال والإجابة في قاعدة البيانات
+    save_to_db(req.prompt, req.language, reply)
+
+    return {"generated_code": reply}
